@@ -4,10 +4,6 @@
 #SBATCH --output=run11.12-%j.out
 #SBATCH --error=run11.12-%j.err
 
-# 用法：
-#   sbatch --gpus=1 run11.12.sh
-
-
 set -euo pipefail
 
 module load miniforge/24.1.2
@@ -25,6 +21,7 @@ OUT=/data02/run01/scv7se2/outputs/knit_dit/11.12
 SEED=42
 NUM_SAMPLES=100
 BATCH_SIZE=16
+UPDATES="${UPDATES:-100000}"
 
 cd "$PROJECT"
 
@@ -68,7 +65,10 @@ python -m knit.data --encode --root "$RAW" \
 python -m knit.train \
   --config "$OUT/base.json" \
   --seed "$SEED" \
-  --out "$OUT/base_s${SEED}"
+  --out "$OUT/base_s${SEED}" \
+  --updates "$UPDATES" \
+  --val-every 5000 \
+  --ckpt-every 10000
 
 python -m knit.requests \
   --config "$OUT/base.json" \
@@ -87,6 +87,7 @@ for METHOD in a0 a1 a2; do
     --seed "$SEED"
     --requests "$OUT/a/requests_s${SEED}.npz"
     --palette "$OUT/processed/palette.json"
+    --preview-scale 10
   )
   if [[ "$METHOD" != "a0" ]]; then
     ARGS+=(--candidate-budget 24)

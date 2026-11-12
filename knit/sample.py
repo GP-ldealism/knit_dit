@@ -116,6 +116,8 @@ def sample_a(
     batch_size = int(args.batch_size)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    preview_scale = int(args.preview_scale)
+    preview_dir = out / "preview" if preview_scale > 1 else None
     palette = load_palette(args.palette)
     all_labels: list[np.ndarray] = []
     feedback_stats: dict[str, int] | None = (
@@ -150,7 +152,7 @@ def sample_a(
                 int(config["image_size"]),
             ),
             noise=noise[start:end],
-            clip_denoised=False,
+            clip_denoised=True,
             denoised_fn=denoised_fn,
             model_kwargs={"y": y[start:end]},
             device=device,
@@ -181,6 +183,13 @@ def sample_a(
         for offset, item in enumerate(labels):
             sample_id = start + offset
             save_labels_png(item, out / f"{sample_id:06d}.png", palette=palette)
+            if preview_dir is not None:
+                save_labels_png(
+                    item,
+                    preview_dir / f"{sample_id:06d}.png",
+                    palette=palette,
+                    scale=preview_scale,
+                )
             append_jsonl(
                 out / "meta.jsonl",
                 {
@@ -208,6 +217,7 @@ def sample_a(
         "seed": int(args.seed),
         "num_samples": num_samples,
         "batch_size": batch_size,
+        "preview_scale": preview_scale,
         "requests": args.requests,
         "candidate_budget": int(args.candidate_budget),
         "feedback_steps": steps,
@@ -233,6 +243,7 @@ def main() -> None:
     parser.add_argument("--candidate-budget", type=int, default=24)
     parser.add_argument("--feedback-steps", default="70,85,95")
     parser.add_argument("--palette", default="data/nik/processed/palette.json")
+    parser.add_argument("--preview-scale", type=int, default=10)
     args = parser.parse_args()
 
     config = load_json(args.config)

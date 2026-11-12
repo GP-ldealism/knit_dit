@@ -47,12 +47,17 @@ def save_labels_png(
     labels: np.ndarray,
     path: str | Path,
     palette: list[int] | None = None,
+    scale: int = 1,
 ) -> None:
     labels = np.asarray(labels, dtype=np.uint8)
     if labels.ndim != 2:
         raise ValueError(f"expected 2D labels, got {labels.shape}")
+    if scale < 1:
+        raise ValueError(f"scale must be >= 1, got {scale}")
     img = Image.fromarray(labels, mode="P")
     img.putpalette(default_palette() if palette is None else palette)
+    if scale > 1:
+        img = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
 
