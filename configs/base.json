@@ -1,0 +1,29 @@
+{
+  "image_size": 20,
+  "in_channels": 17,
+  "patch_size": 2,
+  "hidden_size": 192,
+  "depth": 6,
+  "num_heads": 3,
+  "mlp_ratio": 4.0,
+  "num_classes": 1,
+  "class_dropout_prob": 0.0,
+  "learn_sigma": false,
+  "batch_size": 32,
+  "lr": 0.0001,
+  "weight_decay": 0.0,
+  "updates": 5000,
+  "val_every": 500,
+  "ckpt_every": 1000,
+  "log_every": 10,
+  "num_workers": 2,
+  "data": {
+    "train_labels": "data/nik/processed/train_labels.npy",
+    "train_meta": "data/nik/processed/train_meta.json",
+    "val_labels": "data/nik/processed/val_labels.npy",
+    "val_meta": "data/nik/processed/val_meta.json",
+    "test_labels": "data/nik/processed/test_labels.npy",
+    "test_meta": "data/nik/processed/test_meta.json",
+    "palette": "data/nik/processed/palette.json"
+  }
+}
