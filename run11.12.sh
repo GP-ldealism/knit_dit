@@ -6,16 +6,20 @@
 
 # 用法：
 #   sbatch --gpus=1 run11.12.sh
-#
-# 注意：checker/repair 仍是占位实现，A1/A2 可以跑通，但没有真实规则收益。
+
 
 set -euo pipefail
 
 module load miniforge/24.1.2
 source activate /data02/run01/scv7se2/envs/knit_dit
 
+# date
+# tar -xf /data02/run01/scv7se2/datasets/knit.tar.gz -C /dev/shm
+# date
+
 PROJECT=/data02/run01/scv7se2/knit_dit
 DATA=/data02/run01/scv7se2/datasets/knit
+# DATA=/dev/shm/knit
 OUT=/data02/run01/scv7se2/outputs/knit_dit/11.12
 
 SEED=42
@@ -26,13 +30,11 @@ cd "$PROJECT"
 
 mkdir -p "$OUT/a" "$OUT/processed" "$OUT/splits"
 
-# NIK 原始 instruction 图；如果实际目录不同，修改这里。
+# NIK 原始 instruction 图；A 组只允许该目录，禁止回退到 $DATA。
 RAW="$DATA/instruction"
 if [[ ! -d "$RAW" ]]; then
-  RAW="$DATA/raw"
-fi
-if [[ ! -d "$RAW" ]]; then
-  RAW="$DATA"
+  echo "missing NIK instruction directory: $RAW" >&2
+  exit 1
 fi
 
 python - "$PROJECT/configs/base.json" "$OUT/base.json" "$OUT/processed" <<'PY'
