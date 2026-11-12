@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from knit.io import load_json
+from knit.io import load_json, save_json
 
 
 def make_requests(
@@ -25,6 +25,16 @@ def make_requests(
     noise = rng.standard_normal(shape, dtype=np.float32)
     y = np.zeros(num_samples, dtype=np.int64)
     np.savez(out, noise=noise, y=y)
+    save_json(
+        out.with_suffix(".json"),
+        {
+            "path": str(out),
+            "num_samples": num_samples,
+            "seed": seed,
+            "shape": list(shape),
+            "config": config,
+        },
+    )
     return out
 
 

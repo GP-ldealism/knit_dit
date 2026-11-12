@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,14 @@ import torch
 
 from diffusion import create_diffusion
 from knit import checker, feedback, repair
-from knit.io import append_jsonl, load_json, save_json, save_labels_png
+from knit.encoding import CROSS_CLASSES, LabelSpec
+from knit.io import (
+    append_jsonl,
+    load_json,
+    save_json,
+    save_labels_png,
+    sha256_array,
+)
 from knit.model import build_dit
 
 
@@ -95,7 +103,9 @@ def sample_a(
     model: torch.nn.Module,
     device: torch.device,
 ) -> None:
+    run_start = time.perf_counter()
     num_samples = int(args.num_samples)
+    spec = LabelSpec(num_classes=int(config["in_channels"]))
     noise, y = make_noise(
         num_samples, config, args.requests, args.seed, device
     )
@@ -108,6 +118,18 @@ def sample_a(
     out.mkdir(parents=True, exist_ok=True)
     palette = load_palette(args.palette)
     all_labels: list[np.ndarray] = []
+    feedback_stats: dict[str, int] | None = (
+        {
+            "step": 0,
+            "budget_left": 0,
+            "checks": 0,
+            "candidate_evaluations": 0,
+            "corrections": 0,
+            "corrected_samples": 0,
+        }
+        if args.method == "a2"
+        else None
+    )
 
     for start in range(0, num_samples, batch_size):
         end = min(start + batch_size, num_samples)
@@ -134,6 +156,20 @@ def sample_a(
             device=device,
             progress=True,
         )
+        if denoised_fn is not None and hasattr(denoised_fn, "stats"):
+            chunk_stats = denoised_fn.stats
+            if feedback_stats is not None:
+                for key in (
+                    "checks",
+                    "candidate_evaluations",
+                    "corrections",
+                    "corrected_samples",
+                ):
+                    feedback_stats[key] += int(chunk_stats.get(key, 0))
+                feedback_stats["step"] = int(chunk_stats.get("step", 0))
+                feedback_stats["budget_left"] = int(
+                    chunk_stats.get("budget_left", 0)
+                )
         labels = samples.argmax(dim=1).detach().cpu().numpy().astype(np.uint8)
         if args.method == "a1":
             labels = repair_labels(
@@ -151,6 +187,9 @@ def sample_a(
                     "id": sample_id,
                     "method": args.method,
                     "path": f"{sample_id:06d}.png",
+                    "sha256": sha256_array(item),
+                    "class_counts": spec.histogram(item).tolist(),
+                    "cross_cells": int(np.isin(item, list(CROSS_CLASSES)).sum()),
                     "check": checker.check(
                         item, num_classes=int(config["in_channels"])
                     ).to_dict(),
@@ -162,8 +201,23 @@ def sample_a(
     reports = checker.check_batch(
         labels_array, num_classes=int(config["in_channels"])
     )
-    save_json(out / "check_summary.json", checker.summarize(reports))
-    print(json.dumps(checker.summarize(reports), ensure_ascii=False, indent=2))
+    check_summary = checker.summarize(reports)
+    save_json(out / "check_summary.json", check_summary)
+    summary = {
+        "method": args.method,
+        "seed": int(args.seed),
+        "num_samples": num_samples,
+        "batch_size": batch_size,
+        "requests": args.requests,
+        "candidate_budget": int(args.candidate_budget),
+        "feedback_steps": steps,
+        "elapsed_sec": time.perf_counter() - run_start,
+        "config": config,
+        "check": check_summary,
+        "feedback_stats": feedback_stats,
+    }
+    save_json(out / "sample_summary.json", summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 def main() -> None:

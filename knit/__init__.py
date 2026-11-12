@@ -1,4 +1,5 @@
 __all__ = [
+    "encoding",
     "io",
     "data",
     "model",
@@ -7,6 +8,7 @@ __all__ = [
     "checker",
     "repair",
     "feedback",
+    "metrics",
     "evaluate",
     "requests",
 ]

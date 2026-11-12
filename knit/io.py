@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from knit.encoding import LabelSpec
+
 
 def default_palette() -> list[int]:
     palette: list[int] = []
@@ -56,30 +58,11 @@ def save_labels_png(
 
 
 def labels_to_onehot(labels: np.ndarray, num_classes: int = 17) -> np.ndarray:
-    arr = np.asarray(labels, dtype=np.int64)
-    if arr.ndim not in (2, 3):
-        raise ValueError(f"expected [H,W] or [N,H,W], got {arr.shape}")
-    onehot = np.eye(num_classes, dtype=np.float32)[arr]
-    if arr.ndim == 2:
-        onehot = np.moveaxis(onehot, -1, 0)
-    else:
-        onehot = np.moveaxis(onehot, -1, 1)
-    return onehot * 2.0 - 1.0
+    return LabelSpec(num_classes=num_classes).encode(labels)
 
 
 def onehot_to_labels(x: Any) -> np.ndarray:
-    if hasattr(x, "dim") and hasattr(x, "argmax"):
-        if x.dim() == 4:
-            return x.argmax(dim=1).detach().cpu().numpy()
-        if x.dim() == 3:
-            return x.argmax(dim=0).detach().cpu().numpy()
-        raise ValueError(f"expected [C,H,W] or [N,C,H,W], got {tuple(x.shape)}")
-    arr = np.asarray(x)
-    if arr.ndim == 4:
-        return arr.argmax(axis=1)
-    if arr.ndim == 3:
-        return arr.argmax(axis=0)
-    raise ValueError(f"expected [C,H,W] or [N,C,H,W], got {arr.shape}")
+    return LabelSpec().decode(x)
 
 
 def save_json(path: str | Path, obj: Any) -> None:

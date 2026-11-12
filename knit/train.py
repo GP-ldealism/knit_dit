@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Subset
 from diffusion import create_diffusion
 from knit.data import KnitDataset
 from knit.io import append_jsonl, load_json, save_json
-from knit.model import build_dit, count_parameters
+from knit.model import build_dit, count_parameters, describe_model
 
 
 def set_seed(seed: int) -> None:
@@ -109,6 +109,7 @@ def main() -> None:
     parser.add_argument("--ckpt-every", type=int, default=None)
     args = parser.parse_args()
 
+    run_start = time.perf_counter()
     config = load_json(args.config)
     if args.updates is not None:
         config["updates"] = args.updates
@@ -162,6 +163,8 @@ def main() -> None:
     )
 
     model = build_dit(config).to(device)
+    model_summary = describe_model(model)
+    save_json(out / "model.json", model_summary)
     diffusion = create_diffusion(timestep_respacing="", learn_sigma=False)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -190,6 +193,7 @@ def main() -> None:
     ckpt_every = int(config.get("ckpt_every", 1000))
     log_path = out / "train.jsonl"
     data_iter = iter(train_loader)
+    best_val_loss: float | None = None
     model.train()
 
     print(
@@ -227,6 +231,8 @@ def main() -> None:
 
         if step % val_every == 0:
             val_loss = validation_loss(model, val_loader, diffusion, device)
+            if best_val_loss is None or val_loss < best_val_loss:
+                best_val_loss = val_loss
             record = {"step": step, "val_loss": val_loss}
             append_jsonl(log_path, record)
             print(json.dumps(record, ensure_ascii=False))
@@ -235,7 +241,19 @@ def main() -> None:
             save_checkpoint(out, model, optimizer, config, step)
 
     save_checkpoint(out, model, optimizer, config, updates)
-    print(f"finished at step {updates}; outputs in {out}")
+    summary = {
+        "seed": int(args.seed),
+        "device": str(device),
+        "start_step": start_step,
+        "updates": updates,
+        "train_samples": len(train_dataset),
+        "val_samples": len(val_dataset),
+        "best_val_loss": best_val_loss,
+        "elapsed_sec": time.perf_counter() - run_start,
+        "model": model_summary,
+    }
+    save_json(out / "train_summary.json", summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
