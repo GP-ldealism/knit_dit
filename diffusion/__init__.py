@@ -13,6 +13,7 @@ def create_diffusion(
     use_kl=False,
     sigma_small=False,
     predict_xstart=False,
+    predict_v=False,
     learn_sigma=True,
     rescale_learned_sigmas=False,
     diffusion_steps=1000
@@ -26,12 +27,18 @@ def create_diffusion(
         loss_type = gd.LossType.MSE
     if timestep_respacing is None or timestep_respacing == "":
         timestep_respacing = [diffusion_steps]
+    if predict_xstart and predict_v:
+        raise ValueError("predict_xstart and predict_v are mutually exclusive")
+    if predict_v:
+        model_mean_type = gd.ModelMeanType.V_PREDICTION
+    elif predict_xstart:
+        model_mean_type = gd.ModelMeanType.START_X
+    else:
+        model_mean_type = gd.ModelMeanType.EPSILON
     return SpacedDiffusion(
         use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
         betas=betas,
-        model_mean_type=(
-            gd.ModelMeanType.EPSILON if not predict_xstart else gd.ModelMeanType.START_X
-        ),
+        model_mean_type=model_mean_type,
         model_var_type=(
             (
                 gd.ModelVarType.FIXED_LARGE

@@ -84,6 +84,28 @@ def class_metrics(labels: np.ndarray, spec: LabelSpec) -> dict[str, Any]:
     }
 
 
+def distribution_metrics(
+    labels: np.ndarray,
+    reference: np.ndarray,
+    spec: LabelSpec,
+) -> dict[str, Any]:
+    counts = spec.histogram(labels).astype(np.float64)
+    reference_counts = spec.histogram(reference).astype(np.float64)
+    total = float(counts.sum())
+    reference_total = float(reference_counts.sum())
+    if total == 0 or reference_total == 0:
+        return {"tv": None, "l1": None}
+    frequencies = counts / total
+    reference_frequencies = reference_counts / reference_total
+    difference = np.abs(frequencies - reference_frequencies)
+    return {
+        "tv": float(0.5 * difference.sum()),
+        "l1": float(difference.sum()),
+        "frequencies": [float(value) for value in frequencies],
+        "reference_frequencies": [float(value) for value in reference_frequencies],
+    }
+
+
 def structure_metrics(labels: np.ndarray) -> dict[str, Any]:
     total = int(labels.shape[0])
     flat = labels.reshape(total, -1)
@@ -249,6 +271,7 @@ def evaluate_labels(
             "count": copied,
             "rate": copied / total if total else 0.0,
         }
+        result["distribution"] = distribution_metrics(labels, train, spec)
         result["novelty"] = (
             nearest_train_hamming(labels, train) if compute_novelty else None
         )
@@ -265,6 +288,7 @@ def evaluate_labels(
         result["train_copy_count"] = 0
         result["train_copy_rate"] = 0.0
         result["train_copy"] = {"count": 0, "rate": 0.0, "available": False}
+        result["distribution"] = None
         result["novelty"] = None
         result["complex_proxy"] = None
     result["method"] = _mode(record.get("method") for record in records)
@@ -272,4 +296,6 @@ def evaluate_labels(
         if result["method"] is None:
             result["method"] = run_summary.get("method")
         result["seed"] = run_summary.get("seed")
+        result["ddim_steps"] = run_summary.get("ddim_steps")
+        result["checkpoint"] = run_summary.get("checkpoint")
     return result

@@ -28,6 +28,7 @@ class ModelMeanType(enum.Enum):
     PREVIOUS_X = enum.auto()  # the model predicts x_{t-1}
     START_X = enum.auto()  # the model predicts x_0
     EPSILON = enum.auto()  # the model predicts epsilon
+    V_PREDICTION = enum.auto()  # the model predicts v = alpha_t * eps - sigma_t * x_0
 
 
 class ModelVarType(enum.Enum):
@@ -316,6 +317,10 @@ class GaussianDiffusion:
 
         if self.model_mean_type == ModelMeanType.START_X:
             pred_xstart = process_xstart(model_output)
+        elif self.model_mean_type == ModelMeanType.V_PREDICTION:
+            pred_xstart = process_xstart(
+                self._predict_xstart_from_v(x_t=x, t=t, v=model_output)
+            )
         else:
             pred_xstart = process_xstart(
                 self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output)
@@ -342,6 +347,18 @@ class GaussianDiffusion:
         return (
             _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - pred_xstart
         ) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+
+    def _predict_xstart_from_v(self, x_t, t, v):
+        assert x_t.shape == v.shape
+        alpha = _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_t.shape)
+        sigma = _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
+        return alpha * x_t - sigma * v
+
+    def _predict_eps_from_v(self, x_t, t, v):
+        assert x_t.shape == v.shape
+        alpha = _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_t.shape)
+        sigma = _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
+        return alpha * v + sigma * x_t
 
     def condition_mean(self, cond_fn, p_mean_var, x, t, model_kwargs=None):
         """
@@ -774,6 +791,14 @@ class GaussianDiffusion:
                 )[0],
                 ModelMeanType.START_X: x_start,
                 ModelMeanType.EPSILON: noise,
+                ModelMeanType.V_PREDICTION: (
+                    _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape)
+                    * noise
+                    - _extract_into_tensor(
+                        self.sqrt_one_minus_alphas_cumprod, t, x_start.shape
+                    )
+                    * x_start
+                ),
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
             terms["mse"] = mean_flat((target - model_output) ** 2)

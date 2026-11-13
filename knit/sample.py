@@ -7,8 +7,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from diffusion import create_diffusion
 from knit import checker, feedback, repair
+from knit.checkpoint import load_model
+from knit.diffusion_setup import make_diffusion, merge_diffusion_config
 from knit.encoding import CROSS_CLASSES, LabelSpec
 from knit.io import (
     append_jsonl,
@@ -17,21 +18,6 @@ from knit.io import (
     save_labels_png,
     sha256_array,
 )
-from knit.model import build_dit
-
-
-def load_model(config: dict[str, Any], ckpt: str, device: torch.device) -> torch.nn.Module:
-    model = build_dit(config).to(device)
-    checkpoint = torch.load(ckpt, map_location="cpu", weights_only=False)
-    if isinstance(checkpoint, dict) and "model" in checkpoint:
-        state = checkpoint["model"]
-    elif isinstance(checkpoint, dict) and "ema" in checkpoint:
-        state = checkpoint["ema"]
-    else:
-        state = checkpoint
-    model.load_state_dict(state)
-    model.eval()
-    return model
 
 
 def load_palette(path: str | None) -> list[int] | None:
@@ -102,6 +88,7 @@ def sample_a(
     config: dict[str, Any],
     model: torch.nn.Module,
     device: torch.device,
+    checkpoint_info: dict[str, Any],
 ) -> None:
     run_start = time.perf_counter()
     num_samples = int(args.num_samples)
@@ -111,7 +98,7 @@ def sample_a(
     )
     if y is None:
         y = torch.zeros(num_samples, dtype=torch.long, device=device)
-    diffusion = create_diffusion("ddim100", learn_sigma=False)
+    diffusion = make_diffusion(config, f"ddim{args.ddim_steps}")
     steps = [int(item) for item in args.feedback_steps.split(",") if item]
     batch_size = int(args.batch_size)
     out = Path(args.out)
@@ -218,6 +205,8 @@ def sample_a(
         "num_samples": num_samples,
         "batch_size": batch_size,
         "preview_scale": preview_scale,
+        "ddim_steps": int(args.ddim_steps),
+        "checkpoint": checkpoint_info,
         "requests": args.requests,
         "candidate_budget": int(args.candidate_budget),
         "feedback_steps": steps,
@@ -244,12 +233,19 @@ def main() -> None:
     parser.add_argument("--feedback-steps", default="70,85,95")
     parser.add_argument("--palette", default="data/nik/processed/palette.json")
     parser.add_argument("--preview-scale", type=int, default=10)
+    parser.add_argument("--ddim-steps", type=int, default=100)
+    parser.add_argument("--weights", choices=["auto", "ema", "model"], default="auto")
     args = parser.parse_args()
+    if not 1 <= args.ddim_steps <= 1000:
+        parser.error("--ddim-steps must be in 1..1000")
 
     config = load_json(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(config, args.ckpt, device)
-    sample_a(args, config, model, device)
+    model, checkpoint_info = load_model(
+        config, args.ckpt, device, weights=args.weights
+    )
+    config = merge_diffusion_config(config, checkpoint_info.get("config"))
+    sample_a(args, config, model, device, checkpoint_info)
 
 
 if __name__ == "__main__":

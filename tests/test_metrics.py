@@ -44,6 +44,13 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(result["check"]["passed"], 0)
         self.assertFalse(result["label_validity"]["valid_rate"])
 
+    def test_distribution_against_train(self) -> None:
+        result = evaluate_labels(self.generated, train_labels=self.train)
+        distribution = result["distribution"]
+        self.assertEqual(len(distribution["frequencies"]), 17)
+        self.assertAlmostEqual(distribution["tv"], 0.5)
+        self.assertAlmostEqual(distribution["l1"], 1.0)
+
     def test_cost_and_method(self) -> None:
         summary = {
             "method": "a2",
