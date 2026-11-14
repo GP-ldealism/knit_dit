@@ -173,6 +173,7 @@ def main() -> None:
     parser.add_argument("--ema-decay", type=float, default=None)
     parser.add_argument("--ema-start-step", type=int, default=None)
     parser.add_argument("--max-seconds", type=float, default=None)
+    parser.add_argument("--stop-at-step", type=int, default=None)
     parser.add_argument("--grad-accum-steps", type=int, default=None)
     parser.add_argument(
         "--noise-schedule",
@@ -217,6 +218,8 @@ def main() -> None:
         config["ema_start_step"] = args.ema_start_step
     if args.max_seconds is not None:
         config["max_seconds"] = args.max_seconds
+    if args.stop_at_step is not None:
+        config["stop_at_step"] = args.stop_at_step
     if args.grad_accum_steps is not None:
         config["grad_accum_steps"] = args.grad_accum_steps
     if args.noise_schedule is not None:
@@ -292,6 +295,8 @@ def main() -> None:
     ema_decay = float(config.get("ema_decay", 0.0))
     ema_start_step = int(config.get("ema_start_step", 0))
     max_seconds = config.get("max_seconds")
+    stop_at_step = config.get("stop_at_step")
+    stop_at_step = None if stop_at_step is None else int(stop_at_step)
     grad_accum_steps = max(1, int(config.get("grad_accum_steps", 1)))
 
     start_step = 0
@@ -320,6 +325,7 @@ def main() -> None:
         ema.module.load_state_dict(resume_payload["ema"])
 
     updates = int(config["updates"])
+    effective_stop = updates if stop_at_step is None else min(updates, stop_at_step)
     log_every = int(config.get("log_every", 10))
     val_every = int(config.get("val_every", 500))
     ckpt_every = int(config.get("ckpt_every", 1000))
@@ -335,10 +341,10 @@ def main() -> None:
         f"grad_accum={grad_accum_steps} schedule={diff_settings['noise_schedule']} "
         f"predict_xstart={diff_settings['predict_xstart']} "
         f"predict_v={diff_settings['predict_v']} t_sample={t_sample} "
-        f"min_snr_gamma={min_snr_gamma}"
+        f"min_snr_gamma={min_snr_gamma} stop_at_step={stop_at_step}"
     )
 
-    for step in range(start_step + 1, updates + 1):
+    for step in range(start_step + 1, effective_stop + 1):
         current_lr = learning_rate_at(
             step,
             base_lr=float(config["lr"]),
@@ -437,6 +443,16 @@ def main() -> None:
             )
             break
 
+    if (
+        stop_at_step is not None
+        and current_step >= stop_at_step
+        and current_step < updates
+    ):
+        print(
+            f"stopped at stop_at_step={stop_at_step} (step {current_step})",
+            flush=True,
+        )
+
     save_ema = (
         ema if ema is not None and current_step >= ema_start_step else None
     )
@@ -449,6 +465,7 @@ def main() -> None:
         "start_step": start_step,
         "last_step": current_step,
         "updates": updates,
+        "stop_at_step": stop_at_step,
         "completed": current_step >= updates,
         "train_samples": len(train_dataset),
         "val_samples": len(val_dataset),

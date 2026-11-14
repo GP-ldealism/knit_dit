@@ -26,6 +26,7 @@ VARIANTS="${VARIANTS:-eps_linear eps_cos x0_cos v_cos eps_cos_logitnorm}"
 METHOD_UPDATES="${METHOD_UPDATES:-100000}"
 METHOD_BATCH_SIZE="${METHOD_BATCH_SIZE:-32}"
 METHOD_SAMPLE_STEPS="${METHOD_SAMPLE_STEPS:-}"
+STOP_AT_STEP="${STOP_AT_STEP:-}"
 TRAIN_EXTRA="${TRAIN_EXTRA:-}"
 METHOD_EXTRA="${METHOD_EXTRA:-}"
 STAGE="${1:-${STAGE:-help}}"
@@ -60,7 +61,7 @@ Stages:
 
 Common overrides:
   SEED=42 NUM_SAMPLES=100 DIAG_SAMPLES=100 REQUEST_SAMPLES=1000 BATCH_SIZE=16
-  UPDATES=100000 MAX_SECONDS=19800 DDIM_STEPS=250 WEIGHTS=auto
+  UPDATES=100000 MAX_SECONDS=19800 STOP_AT_STEP=50000 DDIM_STEPS=250 WEIGHTS=auto
   STEPS="100 250 500" METHODS=a0
   VARIANTS="eps_linear eps_cos x0_cos v_cos eps_cos_logitnorm" METHOD_UPDATES=100000
   METHOD_SAMPLE_STEPS="25000 50000 100000"
@@ -273,6 +274,9 @@ run_train() {
   fi
   if [[ -n "$TRAIN_EXTRA" ]]; then
     args+=($TRAIN_EXTRA)
+  fi
+  if [[ -n "${STOP_AT_STEP:-}" ]]; then
+    args+=(--stop-at-step "$STOP_AT_STEP")
   fi
   if [[ -n "$resume" ]]; then
     args+=(--resume "$resume")
