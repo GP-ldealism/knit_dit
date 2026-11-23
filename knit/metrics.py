@@ -179,6 +179,52 @@ def nearest_train_hamming(
     }
 
 
+def nearest_train_details(
+    labels: np.ndarray,
+    train_labels: np.ndarray,
+    max_chunk_elements: int = 20_000_000,
+) -> dict[str, Any]:
+    generated = labels.reshape(labels.shape[0], -1)
+    train = train_labels.reshape(train_labels.shape[0], -1)
+    if generated.shape[1] != train.shape[1]:
+        raise ValueError(
+            f"label spatial size mismatch: {generated.shape[1]} vs {train.shape[1]}"
+        )
+    total = int(generated.shape[0])
+    if total == 0 or train.shape[0] == 0:
+        return {
+            "distances": [],
+            "indices": [],
+            "mean": None,
+            "median": None,
+            "min": None,
+            "max": None,
+            "exact_copy_count": 0,
+            "exact_copy_rate": 0.0,
+        }
+    chunk_size = max(1, min(64, max_chunk_elements // max(train.shape[0] * train.shape[1], 1)))
+    distances = np.empty(total, dtype=np.int32)
+    indices = np.empty(total, dtype=np.int32)
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
+        block = np.count_nonzero(
+            generated[start:end, None, :] != train[None, :, :], axis=2
+        )
+        distances[start:end] = block.min(axis=1)
+        indices[start:end] = block.argmin(axis=1)
+    exact = int(np.count_nonzero(distances == 0))
+    return {
+        "distances": [int(value) for value in distances],
+        "indices": [int(value) for value in indices],
+        "mean": float(distances.mean()),
+        "median": float(np.median(distances)),
+        "min": int(distances.min()),
+        "max": int(distances.max()),
+        "exact_copy_count": exact,
+        "exact_copy_rate": exact / total,
+    }
+
+
 def check_metrics(labels: np.ndarray, spec: LabelSpec) -> dict[str, Any]:
     reports = checker.check_batch(labels, num_classes=spec.num_classes)
     summary = checker.summarize(reports)

@@ -73,6 +73,23 @@ def learning_rate_at(
     raise ValueError(f"unknown lr schedule: {schedule}")
 
 
+def check_init_config(
+    source_payload: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any]:
+    source_config = source_payload.get("config") if source_payload else None
+    if not isinstance(source_config, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in ("noise_schedule", "predict_xstart", "predict_v", "learn_sigma"):
+        if key in source_config:
+            result[key] = {
+                "source": source_config[key],
+                "current": config.get(key),
+                "match": source_config[key] == config.get(key),
+            }
+    return result
+
+
 def make_dataset(config: dict[str, Any], split: str) -> KnitDataset:
     data_cfg = config["data"]
     labels = data_cfg[f"{split}_labels"]
@@ -159,6 +176,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--resume", default=None)
+    parser.add_argument("--init-from", default=None)
     parser.add_argument("--overfit", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--device", default=None)
@@ -185,6 +203,8 @@ def main() -> None:
     parser.add_argument("--t-sample", choices=["uniform", "logitnorm"], default=None)
     parser.add_argument("--min-snr-gamma", type=float, default=None)
     args = parser.parse_args()
+    if args.resume and args.init_from:
+        parser.error("--resume and --init-from are mutually exclusive")
 
     run_start = time.perf_counter()
     config = load_json(args.config)
@@ -272,6 +292,44 @@ def main() -> None:
     model = build_dit(config).to(device)
     model_summary = describe_model(model)
     save_json(out / "model.json", model_summary)
+
+    init_payload: dict[str, Any] = {}
+    init_weights = ""
+    init_step: int | None = None
+    init_config_check: dict[str, Any] = {}
+    if args.init_from:
+        init_checkpoint = torch.load(
+            args.init_from, map_location="cpu", weights_only=False
+        )
+        if isinstance(init_checkpoint, dict):
+            init_payload = init_checkpoint
+        if isinstance(init_checkpoint, dict) and "ema" in init_checkpoint:
+            init_state = init_checkpoint["ema"]
+            init_weights = "ema"
+        elif isinstance(init_checkpoint, dict) and "model" in init_checkpoint:
+            init_state = init_checkpoint["model"]
+            init_weights = "model"
+        else:
+            init_state = init_checkpoint
+            init_weights = "state_dict"
+        model.load_state_dict(init_state)
+        if "step" in init_payload:
+            init_step = int(init_payload["step"])
+        init_config_check = check_init_config(init_payload, config)
+        print(
+            f"initialized from {args.init_from} weights={init_weights} "
+            f"source_step={init_step} config_check={init_config_check}",
+            flush=True,
+        )
+        mismatches = [
+            key for key, item in init_config_check.items() if not item["match"]
+        ]
+        if mismatches:
+            print(
+                f"WARNING: init-from diffusion config mismatch: {mismatches}",
+                flush=True,
+            )
+
     diffusion = make_diffusion(config)
     diff_settings = diffusion_settings(config)
     t_sample = str(config.get("t_sample", "uniform"))
@@ -326,6 +384,14 @@ def main() -> None:
 
     updates = int(config["updates"])
     effective_stop = updates if stop_at_step is None else min(updates, stop_at_step)
+    first_lr = learning_rate_at(
+        start_step + 1,
+        base_lr=float(config["lr"]),
+        min_lr=min_lr,
+        warmup_steps=warmup_updates,
+        total_steps=updates,
+        schedule=lr_schedule,
+    )
     log_every = int(config.get("log_every", 10))
     val_every = int(config.get("val_every", 500))
     ckpt_every = int(config.get("ckpt_every", 1000))
@@ -337,6 +403,8 @@ def main() -> None:
     print(
         f"device={device} params={count_parameters(model)} "
         f"train={len(train_dataset)} val={len(val_dataset)} updates={updates} "
+        f"init_from={args.init_from} init_weights={init_weights} "
+        f"first_lr={first_lr:.8g} "
         f"amp={amp_mode} ema={ema_decay} lr_schedule={lr_schedule} "
         f"grad_accum={grad_accum_steps} schedule={diff_settings['noise_schedule']} "
         f"predict_xstart={diff_settings['predict_xstart']} "
@@ -465,6 +533,14 @@ def main() -> None:
         "start_step": start_step,
         "last_step": current_step,
         "updates": updates,
+        "init_from": args.init_from,
+        "init_from_weights": init_weights,
+        "init_from_step": init_step,
+        "init_from_has_ema": "ema" in init_payload if args.init_from else None,
+        "init_from_has_optimizer": "opt" in init_payload if args.init_from else None,
+        "init_from_config_check": init_config_check,
+        "first_lr": first_lr,
+        "data": config.get("data"),
         "stop_at_step": stop_at_step,
         "completed": current_step >= updates,
         "train_samples": len(train_dataset),

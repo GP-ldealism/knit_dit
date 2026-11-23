@@ -13,4 +13,7 @@ __all__ = [
     "metrics",
     "evaluate",
     "requests",
+    "visualize",
+    "kp",
+    "finetune_config",
 ]
