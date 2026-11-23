@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from knit import checker, feedback, repair
+from knit import checker, feedback, guidance, repair
 from knit.checkpoint import load_model
 from knit.diffusion_setup import make_diffusion, merge_diffusion_config
 from knit.encoding import CROSS_CLASSES, LabelSpec
@@ -100,6 +100,23 @@ def sample_a(
         y = torch.zeros(num_samples, dtype=torch.long, device=device)
     diffusion = make_diffusion(config, f"ddim{args.ddim_steps}")
     steps = [int(item) for item in args.feedback_steps.split(",") if item]
+    guide_enabled = args.guide_style == "thin_v"
+    guide_steps = (
+        guidance.parse_steps(args.guide_steps, int(args.ddim_steps))
+        if guide_enabled
+        else []
+    )
+    guidance_stats: dict[str, Any] = {
+        "enabled": guide_enabled,
+        "style": args.guide_style,
+        "strength": float(args.guide_strength),
+        "steps": guide_steps,
+        "temperature": float(args.guide_temperature),
+        "batches": 0,
+        "applied_steps": 0,
+        "applied_samples": 0,
+        "score_sum": 0.0,
+    }
     batch_size = int(args.batch_size)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -107,6 +124,7 @@ def sample_a(
     preview_dir = out / "preview" if preview_scale > 1 else None
     palette = load_palette(args.palette)
     all_labels: list[np.ndarray] = []
+    all_rule_scores: list[np.ndarray] = []
     feedback_stats: dict[str, int] | None = (
         {
             "step": 0,
@@ -130,6 +148,15 @@ def sample_a(
                 budget=int(args.candidate_budget),
                 num_classes=int(config["in_channels"]),
             )
+        cond_fn = None
+        if guide_enabled:
+            cond_fn = guidance.make_thin_v_cond_fn(
+                model,
+                diffusion,
+                guide_steps,
+                float(args.guide_strength),
+                temperature=float(args.guide_temperature),
+            )
         samples = diffusion.ddim_sample_loop(
             model,
             shape=(
@@ -141,6 +168,7 @@ def sample_a(
             noise=noise[start:end],
             clip_denoised=True,
             denoised_fn=denoised_fn,
+            cond_fn=cond_fn,
             model_kwargs={"y": y[start:end]},
             device=device,
             progress=True,
@@ -159,6 +187,14 @@ def sample_a(
                 feedback_stats["budget_left"] = int(
                     chunk_stats.get("budget_left", 0)
                 )
+        if cond_fn is not None and hasattr(cond_fn, "stats"):
+            chunk_stats = cond_fn.stats
+            guidance_stats["batches"] += 1
+            guidance_stats["applied_steps"] += int(chunk_stats.get("applied_steps", 0))
+            guidance_stats["applied_samples"] += int(
+                chunk_stats.get("applied_samples", 0)
+            )
+            guidance_stats["score_sum"] += float(chunk_stats.get("score_sum", 0.0))
         labels = samples.argmax(dim=1).detach().cpu().numpy().astype(np.uint8)
         if args.method == "a1":
             labels = repair_labels(
@@ -166,6 +202,10 @@ def sample_a(
                 budget=int(args.candidate_budget),
                 num_classes=int(config["in_channels"]),
             )
+        rule_scores = guidance.thin_v_score_labels(
+            labels, num_classes=int(config["in_channels"])
+        )
+        all_rule_scores.append(rule_scores)
         all_labels.append(labels)
         for offset, item in enumerate(labels):
             sample_id = start + offset
@@ -186,6 +226,10 @@ def sample_a(
                     "sha256": sha256_array(item),
                     "class_counts": spec.histogram(item).tolist(),
                     "cross_cells": int(np.isin(item, list(CROSS_CLASSES)).sum()),
+                    "rule_score": float(rule_scores[offset]),
+                    "rule_hit": bool(
+                        rule_scores[offset] >= float(args.rule_threshold)
+                    ),
                     "check": checker.check(
                         item, num_classes=int(config["in_channels"])
                     ).to_dict(),
@@ -193,13 +237,16 @@ def sample_a(
             )
 
     labels_array = np.concatenate(all_labels, axis=0)
+    rule_scores_array = np.concatenate(all_rule_scores, axis=0)
     np.save(out / "labels.npy", labels_array)
+    np.save(out / "rule_scores.npy", rule_scores_array)
     reports = checker.check_batch(
         labels_array, num_classes=int(config["in_channels"])
     )
     check_summary = checker.summarize(reports)
-    save_json(out / "check_summary.json", check_summary)
+    rule_hits = rule_scores_array >= float(args.rule_threshold)
     summary = {
+
         "method": args.method,
         "seed": int(args.seed),
         "num_samples": num_samples,
@@ -210,6 +257,17 @@ def sample_a(
         "requests": args.requests,
         "candidate_budget": int(args.candidate_budget),
         "feedback_steps": steps,
+        "guide_style": args.guide_style,
+        "guide_strength": float(args.guide_strength),
+        "guide_steps": guide_steps,
+        "guide_temperature": float(args.guide_temperature),
+        "rule_threshold": float(args.rule_threshold),
+        "rule_score": {
+            "hits": int(rule_hits.sum()),
+            "hit_rate": float(rule_hits.mean()) if len(rule_hits) else 0.0,
+            "mean": float(rule_scores_array.mean()) if len(rule_scores_array) else 0.0,
+        },
+        "guidance_stats": guidance_stats,
         "elapsed_sec": time.perf_counter() - run_start,
         "config": config,
         "check": check_summary,
@@ -231,6 +289,13 @@ def main() -> None:
     parser.add_argument("--requests", default=None)
     parser.add_argument("--candidate-budget", type=int, default=24)
     parser.add_argument("--feedback-steps", default="70,85,95")
+    parser.add_argument("--guide-style", choices=["none", "thin_v"], default="none")
+    parser.add_argument("--guide-strength", type=float, default=0.0)
+    parser.add_argument(
+        "--guide-steps", default="80,100,120,140,160,180,200,220"
+    )
+    parser.add_argument("--guide-temperature", type=float, default=4.0)
+    parser.add_argument("--rule-threshold", type=float, default=0.7)
     parser.add_argument("--palette", default="data/nik/processed/palette.json")
     parser.add_argument("--preview-scale", type=int, default=10)
     parser.add_argument("--ddim-steps", type=int, default=100)
@@ -238,6 +303,14 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.ddim_steps <= 1000:
         parser.error("--ddim-steps must be in 1..1000")
+    if args.guide_strength < 0:
+        parser.error("--guide-strength must be >= 0")
+    if args.guide_temperature <= 0:
+        parser.error("--guide-temperature must be > 0")
+    if not 0 <= args.rule_threshold <= 1:
+        parser.error("--rule-threshold must be in 0..1")
+    if args.guide_style == "thin_v" and args.method != "a0":
+        parser.error("--guide-style thin_v only supports --method a0")
 
     config = load_json(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
