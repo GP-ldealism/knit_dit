@@ -16,4 +16,5 @@ __all__ = [
     "visualize",
     "kp",
     "finetune_config",
+    "step2_report",
 ]

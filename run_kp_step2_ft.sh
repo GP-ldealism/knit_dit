@@ -89,6 +89,8 @@ for path in "$DATA_DIR/train_labels.npy" "$DATA_DIR/train_meta.json" \
   fi
 done
 
+echo "group=$GROUP data_dir=$DATA_DIR ft_root=$FT_ROOT"
+
 python -m knit.checkpoint --describe "$INIT_CKPT" \
   --expect-ema --expect-step 100000 \
   --expect-noise-schedule squaredcos_cap_v2 --expect-predict-xstart true
@@ -142,7 +144,7 @@ for step in $SAMPLE_STEPS; do
     --weights ema
   python -m knit.evaluate \
     --run-dir "$sample_dir" \
-    --train-labels "$DATA_DIR/train_labels.npy" \
+    --train-labels "$BASE_PROCESSED/train_labels.npy" \
     --out "$sample_dir/eval.json"
   python -m knit.kp --audit-run \
     --labels "$sample_dir/labels.npy" \
